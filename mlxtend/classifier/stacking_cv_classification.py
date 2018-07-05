@@ -205,25 +205,29 @@ class StackingCVClassifier(BaseEstimator, ClassifierMixin, TransformerMixin):
                           ((num + 1), final_cv.get_n_splits()))
 
                 try:
-                    model.fit(X[train_index], y[train_index])
+                    if hasattr(X, 'columns'):
+                        model.fit(X.iloc[train_index], y.iloc[train_index])
+                    else:
+                        model.fit(X[train_index], y[train_index])
                 except TypeError as e:
                     raise TypeError(str(e) + '\nPlease check that X and y'
                                     'are NumPy arrays. If X and y are lists'
                                     ' of lists,\ntry passing them as'
                                     ' numpy.array(X)'
                                     ' and numpy.array(y).')
-                except KeyError as e:
-                    raise KeyError(str(e) + '\nPlease check that X and y'
-                                   ' are NumPy arrays. If X and y are pandas'
-                                   ' DataFrames,\ntry passing them as'
-                                   ' X.values'
-                                   ' and y.values.')
+
 
                 if not self.use_probas:
-                    prediction = model.predict(X[test_index])
+                    if hasattr(X, 'columns'):
+                        prediction = model.predict(X.iloc[test_index])
+                    else:
+                        prediction = model.predict(X[test_index])
                     prediction = prediction.reshape(prediction.shape[0], 1)
                 else:
-                    prediction = model.predict_proba(X[test_index])
+                    if hasattr(X, 'columns'):
+                        prediction = model.predict_proba(X.iloc[test_index])
+                    else:
+                        prediction = model.predict_proba(X[test_index])
                 single_model_prediction = np.vstack([single_model_prediction.
                                                     astype(prediction.dtype),
                                                      prediction])
@@ -249,13 +253,23 @@ class StackingCVClassifier(BaseEstimator, ClassifierMixin, TransformerMixin):
         # We also do the same with the features (we will need this only IF
         # use_features_in_secondary is True)
         reordered_labels = np.array([]).astype(y.dtype)
-        reordered_features = np.array([]).reshape((0, X.shape[1]))\
-            .astype(X.dtype)
+        if hasattr(X, 'columns'):
+            reordered_features = np.array([]).reshape((0, X.shape[1]))\
+                .astype(X.values.dtype)
+        else:
+            reordered_features = np.array([]).reshape((0, X.shape[1])) \
+                .astype(X.dtype)
         for train_index, test_index in skf:
-            reordered_labels = np.concatenate((reordered_labels,
-                                               y[test_index]))
-            reordered_features = np.concatenate((reordered_features,
-                                                 X[test_index]))
+            if hasattr(X, 'columns'):
+                reordered_labels = np.concatenate((reordered_labels,
+                                                   y.iloc[test_index]))
+                reordered_features = np.concatenate((reordered_features,
+                                                     X.iloc[test_index]))
+            else:
+                reordered_labels = np.concatenate((reordered_labels,
+                                                   y[test_index]))
+                reordered_features = np.concatenate((reordered_features,
+                                                     X[test_index]))
 
         # Fit the base models correctly this time using ALL the training set
         for model in self.clfs_:
