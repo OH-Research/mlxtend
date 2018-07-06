@@ -18,6 +18,7 @@ from sklearn.base import clone
 from sklearn.externals import six
 from sklearn.model_selection._split import check_cv
 import numpy as np
+import pandas as pd
 
 
 class StackingCVClassifier(BaseEstimator, ClassifierMixin, TransformerMixin):
@@ -118,6 +119,7 @@ class StackingCVClassifier(BaseEstimator, ClassifierMixin, TransformerMixin):
     def __init__(self, classifiers, meta_classifier,
                  use_probas=False, cv=2,
                  use_features_in_secondary=False,
+                 features_in_secondary_pipeline=None,
                  stratify=True,
                  shuffle=True, verbose=0,
                  store_train_meta_features=False,
@@ -135,6 +137,7 @@ class StackingCVClassifier(BaseEstimator, ClassifierMixin, TransformerMixin):
         self.verbose = verbose
         self.cv = cv
         self.use_features_in_secondary = use_features_in_secondary
+        self.features_in_secondary_pipeline = features_in_secondary_pipeline
         self.stratify = stratify
         self.shuffle = shuffle
         self.store_train_meta_features = store_train_meta_features
@@ -161,6 +164,11 @@ class StackingCVClassifier(BaseEstimator, ClassifierMixin, TransformerMixin):
         self : object
 
         """
+        if self.use_features_in_secondary == True and \
+           self.features_in_secondary_pipeline is None:
+            raise TypeError('\nYou must specify a pipeline'
+                            'for the features that will be'
+                            'add to the stacked models predictions.')
         if self.use_clones:
             self.clfs_ = [clone(clf) for clf in self.classifiers]
             self.meta_clf_ = clone(self.meta_classifier)
@@ -247,6 +255,9 @@ class StackingCVClassifier(BaseEstimator, ClassifierMixin, TransformerMixin):
             self.train_meta_features_ = all_model_predictions[np.argsort(
                 reodered_indices)]
 
+        if self.use_features_in_secondary:
+            self.features_in_secondary_pipeline.fit(X, y)
+
         # We have to shuffle the labels in the same order as we generated
         # predictions during CV (we kinda shuffled them when we did
         # Stratified CV).
@@ -270,6 +281,9 @@ class StackingCVClassifier(BaseEstimator, ClassifierMixin, TransformerMixin):
                                                    y[test_index]))
                 reordered_features = np.concatenate((reordered_features,
                                                      X[test_index]))
+        if hasattr(X, 'columns'):
+            reordered_features = pd.DataFrame(reordered_features,
+                                              columns=X.columns)
 
         # Fit the base models correctly this time using ALL the training set
         for model in self.clfs_:
@@ -279,7 +293,8 @@ class StackingCVClassifier(BaseEstimator, ClassifierMixin, TransformerMixin):
         if not self.use_features_in_secondary:
             self.meta_clf_.fit(all_model_predictions, reordered_labels)
         else:
-            self.meta_clf_.fit(np.hstack((reordered_features,
+            Z = self.features_in_secondary_pipeline.transform(reordered_features)
+            self.meta_clf_.fit(np.hstack((Z,
                                           all_model_predictions)),
                                reordered_labels)
 
@@ -356,7 +371,8 @@ class StackingCVClassifier(BaseEstimator, ClassifierMixin, TransformerMixin):
         if not self.use_features_in_secondary:
             return self.meta_clf_.predict(all_model_predictions)
         else:
-            return self.meta_clf_.predict(np.hstack((X,
+            Z = self.features_in_secondary_pipeline.transform(X)
+            return self.meta_clf_.predict(np.hstack((Z,
                                                      all_model_predictions)))
 
     def predict_proba(self, X):
@@ -390,5 +406,6 @@ class StackingCVClassifier(BaseEstimator, ClassifierMixin, TransformerMixin):
         if not self.use_features_in_secondary:
             return self.meta_clf_.predict_proba(all_model_predictions)
         else:
+            Z = self.features_in_secondary_pipeline.transform(X)
             return self.meta_clf_\
-                .predict_proba(np.hstack((X, all_model_predictions)))
+                .predict_proba(np.hstack((Z, all_model_predictions)))
