@@ -143,7 +143,7 @@ class StackingCVClassifier(BaseEstimator, ClassifierMixin, TransformerMixin):
         self.store_train_meta_features = store_train_meta_features
         self.use_clones = use_clones
 
-    def fit(self, X, y, groups=None):
+    def fit(self, X, y, groups=None, **fit_params):
         """ Fit ensemble classifers and the meta-classifier.
 
         Parameters
@@ -159,6 +159,12 @@ class StackingCVClassifier(BaseEstimator, ClassifierMixin, TransformerMixin):
             The group that each sample belongs to. This is used by specific
             folding strategies such as GroupKFold()
 
+        fit_params : dict, optional
+            Parameters to pass to the fit methods of `classifiers` and
+            `meta_classifier`. Note that only fit parameters for `classifiers`
+            that are the same for each cross-validation split are supported
+            (e.g. `sample_weight` is not currently supported)
+
         Returns
         -------
         self : object
@@ -171,7 +177,9 @@ class StackingCVClassifier(BaseEstimator, ClassifierMixin, TransformerMixin):
                             'add to the stacked models predictions.')
         if self.use_clones:
             self.clfs_ = [clone(clf) for clf in self.classifiers]
+            self.named_clfs_ = {key: value for key, value in _name_estimators(self.clfs_)}
             self.meta_clf_ = clone(self.meta_classifier)
+            self.named_meta_clf_ = {'meta-%s' % key: value for key, value in _name_estimators([self.meta_clf_])}
         else:
             self.clfs_ = self.classifiers
             self.meta_clf_ = self.meta_classifier
@@ -185,8 +193,23 @@ class StackingCVClassifier(BaseEstimator, ClassifierMixin, TransformerMixin):
             final_cv.shuffle = self.shuffle
         skf = list(final_cv.split(X, y, groups))
 
+        # Get fit_params for each classifier in self.named_clfs_
+        named_clfs_fit_params = {}
+        for name, clf in six.iteritems(self.named_clfs_):
+            clf_fit_params = {}
+            for key, value in six.iteritems(fit_params):
+                if name in key and 'meta-' not in key:
+                    clf_fit_params[key.replace(name + '__', '')] = value
+            named_clfs_fit_params[name] = clf_fit_params
+        # Get fit_params for self.named_meta_clf_
+        meta_fit_params = {}
+        meta_clf_name = list(self.named_meta_clf_.keys())[0]
+        for key, value in six.iteritems(fit_params):
+            if meta_clf_name in key and 'meta-' in meta_clf_name:
+                meta_fit_params[key.replace(meta_clf_name + '__', '')] = value
+
         all_model_predictions = np.array([]).reshape(len(y), 0)
-        for model in self.clfs_:
+        for name, model in six.iteritems(self.named_clfs_):
 
             if self.verbose > 0:
                 i = self.clfs_.index(model) + 1
@@ -214,9 +237,9 @@ class StackingCVClassifier(BaseEstimator, ClassifierMixin, TransformerMixin):
 
                 try:
                     if hasattr(X, 'columns'):
-                        model.fit(X.iloc[train_index], y.iloc[train_index])
+                        model.fit(X.iloc[train_index], y.iloc[train_index], **named_clfs_fit_params[name])
                     else:
-                        model.fit(X[train_index], y[train_index])
+                        model.fit(X[train_index], y[train_index], **named_clfs_fit_params[name])
                 except TypeError as e:
                     raise TypeError(str(e) + '\nPlease check that X and y'
                                     'are NumPy arrays. If X and y are lists'
@@ -286,17 +309,17 @@ class StackingCVClassifier(BaseEstimator, ClassifierMixin, TransformerMixin):
                                               columns=X.columns)
 
         # Fit the base models correctly this time using ALL the training set
-        for model in self.clfs_:
-            model.fit(X, y)
+        for name, model in six.iteritems(self.named_clfs_):
+            model.fit(X, y, **named_clfs_fit_params[name])
 
         # Fit the secondary model
         if not self.use_features_in_secondary:
-            self.meta_clf_.fit(all_model_predictions, reordered_labels)
+            self.meta_clf_.fit(all_model_predictions, reordered_labels, **meta_fit_params)
         else:
             Z = self.features_in_secondary_pipeline.transform(reordered_features)
             self.meta_clf_.fit(np.hstack((Z,
                                           all_model_predictions)),
-                               reordered_labels)
+                               reordered_labels, **meta_fit_params)
 
         return self
 
