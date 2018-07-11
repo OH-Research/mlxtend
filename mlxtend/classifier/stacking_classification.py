@@ -105,7 +105,7 @@ class StackingClassifier(BaseEstimator, ClassifierMixin, TransformerMixin):
         self.store_train_meta_features = store_train_meta_features
         self.use_clones = use_clones
 
-    def fit(self, X, y):
+    def fit(self, X, y, **fit_params):
         """ Fit ensemble classifers and the meta-classifier.
 
         Parameters
@@ -115,6 +115,9 @@ class StackingClassifier(BaseEstimator, ClassifierMixin, TransformerMixin):
             n_features is the number of features.
         y : array-like, shape = [n_samples] or [n_samples, n_outputs]
             Target values.
+        fit_params : dict, optional
+            Parameters to pass to the fit methods of the classifiers and
+            meta_classifier.
 
         Returns
         -------
@@ -123,7 +126,9 @@ class StackingClassifier(BaseEstimator, ClassifierMixin, TransformerMixin):
         """
         if self.use_clones:
             self.clfs_ = [clone(clf) for clf in self.classifiers]
+            self.named_clfs_ = {key: value for key, value in _name_estimators(self.clfs_)}
             self.meta_clf_ = clone(self.meta_classifier)
+            self.named_meta_clf_ = {'meta-%s' % key: value for key, value in _name_estimators([self.meta_clf_])}
         else:
             self.clfs_ = self.classifiers
             self.meta_clf_ = self.meta_classifier
@@ -131,7 +136,7 @@ class StackingClassifier(BaseEstimator, ClassifierMixin, TransformerMixin):
         if self.verbose > 0:
             print("Fitting %d classifiers..." % (len(self.classifiers)))
 
-        for clf in self.clfs_:
+        for name, clf in six.iteritems(self.named_clfs_):
 
             if self.verbose > 0:
                 i = self.clfs_.index(clf) + 1
@@ -145,17 +150,28 @@ class StackingClassifier(BaseEstimator, ClassifierMixin, TransformerMixin):
             if self.verbose > 1:
                 print(_name_estimators((clf,))[0][1])
 
-            clf.fit(X, y)
+            clf_fit_params = {}
+            for key, value in six.iteritems(fit_params):
+                if name in key and 'meta-' not in key:
+                    clf_fit_params[key.replace(name+'__', '')] = value
+
+            clf.fit(X, y, **clf_fit_params)
 
         meta_features = self.predict_meta_features(X)
+
+        meta_fit_params = {}
+        meta_clf_name = list(self.named_meta_clf_.keys())[0]
+        for key, value in six.iteritems(fit_params):
+            if meta_clf_name in key and 'meta-' in meta_clf_name:
+                meta_fit_params[key.replace(meta_clf_name+'__', '')] = value
 
         if self.store_train_meta_features:
             self.train_meta_features_ = meta_features
 
         if not self.use_features_in_secondary:
-            self.meta_clf_.fit(meta_features, y)
+            self.meta_clf_.fit(meta_features, y, **meta_fit_params)
         else:
-            self.meta_clf_.fit(np.hstack((X, meta_features)), y)
+            self.meta_clf_.fit(np.hstack((X, meta_features)), y, **meta_fit_params)
 
         return self
 
@@ -198,7 +214,7 @@ class StackingClassifier(BaseEstimator, ClassifierMixin, TransformerMixin):
         """
         check_is_fitted(self, 'clfs_')
         if self.use_probas:
-            probas = np.asarray([clf.predict_proba(X)
+            probas = np.asarray([clf.predict_proba(X)[:, 1].reshape((X.shape[0], 1))
                                  for clf in self.clfs_])
             if self.average_probas:
                 vals = np.average(probas, axis=0)
@@ -254,3 +270,6 @@ class StackingClassifier(BaseEstimator, ClassifierMixin, TransformerMixin):
             return self.meta_clf_.predict_proba(meta_features)
         else:
             return self.meta_clf_.predict_proba(np.hstack((X, meta_features)))
+
+    def decision_function(self, X):
+        self.predict_proba(X)
