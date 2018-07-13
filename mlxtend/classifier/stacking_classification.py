@@ -213,8 +213,8 @@ class StackingClassifier(BaseEstimator, ClassifierMixin, TransformerMixin):
 
         """
         check_is_fitted(self, 'clfs_')
-        if self.use_probas:
-            probas = np.asarray([clf.predict_proba(X)[:, 1].reshape((X.shape[0], 1))
+        if self.use_probas: # keep only (#classes - 1) probas
+            probas = np.asarray([np.delete(clf.predict_proba(X), 0, axis=1).reshape((X.shape[0], 1))
                                  for clf in self.clfs_])
             if self.average_probas:
                 vals = np.average(probas, axis=0)
@@ -271,5 +271,6 @@ class StackingClassifier(BaseEstimator, ClassifierMixin, TransformerMixin):
         else:
             return self.meta_clf_.predict_proba(np.hstack((X, meta_features)))
 
+
     def decision_function(self, X):
-        self.predict_proba(X)
+        return self.predict_proba(X)
